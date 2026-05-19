@@ -15,6 +15,7 @@ Tested with Claude Code **2.1.132** on macOS **11.7.11** (x86_64).
 - [Requirements](#requirements)
 - [Setup](#setup)
 - [Usage](#usage)
+- [Auto-patch on update](#auto-patch-on-update)
 - [How it works](#how-it-works)
 - [Limitations](#limitations)
 - [Files](#files)
@@ -60,6 +61,34 @@ The patch script auto-detects your Node.js directory. If detection fails, pass i
 ```
 
 The script is idempotent -- if the binary is already patched, it will report that and exit.
+
+---
+
+## Auto-patch on update
+
+Claude Code has a built-in auto-updater (`autoUpdates: true` in `~/.claude.json`) that periodically re-runs `npm install -g @anthropic-ai/claude-code`. Every install replaces `bin/claude.exe` and undoes the patch, so plain auto-update + Big Sur means a recurring dyld error.
+
+You can either disable auto-update and re-patch manually after each `npm install`, or install a launchd watcher that re-runs `patch-claude.sh` automatically whenever the binary changes:
+
+```bash
+./install-auto-patch.sh
+```
+
+This:
+
+- Copies `patch-claude.sh` to `~/.claude/compat/` (a TCC-unrestricted directory -- launchd can't execute scripts under `~/Documents/` or `~/Desktop/` on Catalina+).
+- Writes `~/Library/LaunchAgents/local.claude-patch.plist` with absolute paths (launchd plists don't expand `~` or `$HOME`).
+- Bootstraps the agent via `launchctl bootstrap`.
+
+From then on, every change inside `<node>/lib/node_modules/@anthropic-ai/claude-code/bin/` fires `patch-claude.sh`. The script's idempotency check (`otool -L | grep $COMPAT_DIR`) makes spurious fires harmless. Logs land at `~/Library/Logs/claude-patch.log`.
+
+To remove:
+
+```bash
+./uninstall-auto-patch.sh
+```
+
+Re-run `install-auto-patch.sh` after switching Node.js versions (e.g., `nvm install`). The plist hardcodes the Node directory, so a version change without re-installing leaves the watcher pointing at the old path.
 
 ---
 
@@ -110,7 +139,7 @@ The original binary is backed up to `claude.exe.original`.
 
 - **Most stubbed ICU functions do not work.** They exist only to satisfy the linker. The `unumf_openForSkeletonAndLocale` wrapper preserves ordinary number formatting by dropping ICU 66-incompatible default integer-width skeleton tokens, and the `unumrf_open*` functions return sentinel objects so JavaScriptCore can construct `Intl.NumberFormat`. Actual number-range formatting still returns `U_UNSUPPORTED_ERROR`. If Claude Code calls `formatRange()`, `uplrules_selectForRange`, or `ucal_getTimeZoneOffsetFromLocal` at runtime, that operation will fail. In practice, Claude Code does not appear to use these code paths.
 - **`ubrk_clone` is a real shim** and works correctly by delegating to `ubrk_safeClone`. This is the only symbol the binary actually calls during normal operation.
-- **You must re-patch after every update.** `npm install -g @anthropic-ai/claude-code@latest` replaces the binary, so run `./patch-claude.sh` again each time.
+- **You must re-patch after every update.** `npm install -g @anthropic-ai/claude-code@latest` replaces the binary, so run `./patch-claude.sh` again each time. See [Auto-patch on update](#auto-patch-on-update) for a launchd watcher that does this automatically.
 - **x86_64 only.** Big Sur on Apple Silicon is unlikely in the wild, but this has only been tested on Intel.
 - **Not officially supported.** This is a community workaround. A future Claude Code update could add new symbol dependencies that break compatibility.
 
@@ -120,10 +149,12 @@ The original binary is backed up to `claude.exe.original`.
 
 ```
 claude-bigsur-compat/
-  icu_compat.c      C source for the ICU shim library
-  build.sh          Compiles the shim + finds/copies a compatible libc++
-  patch-claude.sh   Patches claude.exe after install/update
-  README.md         This file
+  icu_compat.c              C source for the ICU shim library
+  build.sh                  Compiles the shim + finds/copies a compatible libc++
+  patch-claude.sh           Patches claude.exe after install/update
+  install-auto-patch.sh     Installs a launchd watcher that re-patches on update
+  uninstall-auto-patch.sh   Removes the launchd watcher
+  README.md                 This file
 ```
 
 Build artifacts are placed in `~/.claude/compat/`:
