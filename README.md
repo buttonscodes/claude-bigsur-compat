@@ -60,6 +60,14 @@ The patch script auto-detects your Node.js directory. If detection fails, pass i
 ./patch-claude.sh --node-dir ~/.nvm/versions/node/v22.22.0
 ```
 
+The Anthropic VS Code extension bundles its own Claude Code native binary and may bypass your shell `PATH`. If the extension fails with the same Big Sur `dyld` errors, patch the bundled binary explicitly:
+
+```bash
+for binary in "$HOME"/.vscode/extensions/anthropic.claude-code-*-darwin-*/resources/native-binary/claude; do
+  [ -f "$binary" ] && ./patch-claude.sh --binary "$binary"
+done
+```
+
 The script is idempotent -- if the binary is already patched, it will report that and exit.
 
 ---
@@ -81,6 +89,8 @@ This:
 - Bootstraps the agent via `launchctl bootstrap`.
 
 From then on, every change inside `<node>/lib/node_modules/@anthropic-ai/claude-code/bin/` fires `patch-claude.sh`. The script's idempotency check (`otool -L | grep $COMPAT_DIR`) makes spurious fires harmless. Logs land at `~/Library/Logs/claude-patch.log`.
+
+This watcher covers the npm-installed Claude Code binary. It does not watch VS Code extension directories, so re-run the `--binary` command above after updating the Anthropic VS Code extension.
 
 To remove:
 

@@ -13,14 +13,16 @@
 # Usage:
 #   npm install -g @anthropic-ai/claude-code@latest
 #   ./patch-claude.sh [--node-dir /path/to/node]
+#   ./patch-claude.sh --binary /path/to/claude
 #
 set -euo pipefail
 
 COMPAT_DIR="$HOME/.claude/compat"
 
 usage() {
-    echo "Usage: $0 [--node-dir /path/to/node/version]"
+    echo "Usage: $0 [--node-dir /path/to/node/version] [--binary /path/to/claude]"
     echo "Example: $0 --node-dir ~/.nvm/versions/node/v22.22.0"
+    echo "Example: $0 --binary ~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude"
 }
 
 die() {
@@ -189,6 +191,8 @@ patch_minos() {
 repair_placeholder_binary() {
     local src
 
+    [ -n "${CLAUDE_PKG:-}" ] || die "Cannot repair fallback stub without an npm package context"
+
     wait_for_stable_file "$CLAUDE_EXE"
 
     if is_macho "$CLAUDE_EXE" || is_node_entry "$CLAUDE_EXE"; then
@@ -222,8 +226,8 @@ repair_placeholder_binary() {
     is_macho "$CLAUDE_EXE" || die "Restored claude.exe is not a Mach-O binary"
 }
 
-# Allow overriding the Node.js directory
 NODE_DIR=""
+EXPLICIT_BINARY=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --node-dir)
@@ -234,12 +238,21 @@ while [ "$#" -gt 0 ]; do
         --node-dir=*)
             NODE_DIR="${1#--node-dir=}"
             ;;
+        --binary|--claude-exe)
+            option="$1"
+            shift
+            [ "$#" -gt 0 ] || die "$option requires a value"
+            EXPLICIT_BINARY="$1"
+            ;;
+        --binary=*|--claude-exe=*)
+            EXPLICIT_BINARY="${1#*=}"
+            ;;
         -h|--help)
             usage
             exit 0
             ;;
         *)
-            if [ -z "$NODE_DIR" ]; then
+            if [ -z "$NODE_DIR" ] && [ -z "$EXPLICIT_BINARY" ]; then
                 NODE_DIR="$1"
             else
                 die "unknown arg: $1"
@@ -249,39 +262,51 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-# Auto-detect Node.js directory
-if [ -z "$NODE_DIR" ]; then
-    if command -v node &>/dev/null; then
-        NODE_DIR="$(dirname "$(dirname "$(command -v node)")")"
-    elif [ -d "$HOME/.nvm" ]; then
-        NODE_DIR="$(ls -d "$HOME"/.nvm/versions/node/v* 2>/dev/null | sort -V | tail -1)"
+[ -z "$NODE_DIR" ] || [ -z "$EXPLICIT_BINARY" ] || die "--node-dir and --binary cannot be used together"
+
+if [ -n "$EXPLICIT_BINARY" ]; then
+    CLAUDE_EXE="$EXPLICIT_BINARY"
+    CLAUDE_PKG=""
+else
+    # Auto-detect Node.js directory
+    if [ -z "$NODE_DIR" ]; then
+        if command -v node &>/dev/null; then
+            NODE_DIR="$(dirname "$(dirname "$(command -v node)")")"
+        elif [ -d "$HOME/.nvm" ]; then
+            NODE_DIR="$(ls -d "$HOME"/.nvm/versions/node/v* 2>/dev/null | sort -V | tail -1)"
+        fi
     fi
+
+    [ -n "$NODE_DIR" ] || die "could not detect Node.js dir. Pass --node-dir explicitly."
+
+    CLAUDE_PKG="$NODE_DIR/lib/node_modules/@anthropic-ai/claude-code"
+    CLAUDE_EXE="$CLAUDE_PKG/bin/claude.exe"
 fi
-
-[ -n "$NODE_DIR" ] || die "could not detect Node.js dir. Pass --node-dir explicitly."
-
-CLAUDE_PKG="$NODE_DIR/lib/node_modules/@anthropic-ai/claude-code"
-CLAUDE_EXE="$CLAUDE_PKG/bin/claude.exe"
 
 mkdir -p "$COMPAT_DIR"
 acquire_lock
 
-if [ ! -d "$CLAUDE_PKG" ]; then
-    echo "Claude Code package not present yet; update may still be in progress."
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-        [ -d "$CLAUDE_PKG" ] && break
-        sleep 1
-    done
-fi
+if [ -n "$CLAUDE_PKG" ]; then
+    if [ ! -d "$CLAUDE_PKG" ]; then
+        echo "Claude Code package not present yet; update may still be in progress."
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            [ -d "$CLAUDE_PKG" ] && break
+            sleep 1
+        done
+    fi
 
-[ -d "$CLAUDE_PKG" ] || die "Claude Code package not found at $CLAUDE_PKG"
+    [ -d "$CLAUDE_PKG" ] || die "Claude Code package not found at $CLAUDE_PKG"
 
-if [ ! -f "$CLAUDE_EXE" ]; then
-    echo "claude.exe not present yet; update may still be in progress."
+    if [ ! -f "$CLAUDE_EXE" ]; then
+        echo "claude.exe not present yet; update may still be in progress."
+        repair_placeholder_binary
+    fi
+
     repair_placeholder_binary
+else
+    [ -f "$CLAUDE_EXE" ] || die "Claude binary not found at $CLAUDE_EXE"
+    wait_for_stable_file "$CLAUDE_EXE"
 fi
-
-repair_placeholder_binary
 
 # Verify compat libraries exist
 if [ ! -f "$COMPAT_DIR/libicucore.A.dylib" ] || [ ! -f "$COMPAT_DIR/libc++.1.dylib" ]; then
@@ -324,7 +349,7 @@ if ! is_macho "$CLAUDE_EXE"; then
     die "Refusing to patch non-Mach-O claude.exe: $CLAUDE_EXE"
 fi
 
-VERSION=$("$CLAUDE_PKG/bin/claude.exe" --version 2>&1 || echo "unknown (binary won't run yet)")
+VERSION=$("$CLAUDE_EXE" --version 2>&1 || echo "unknown (binary won't run yet)")
 echo "Patching Claude Code ($VERSION) for Big Sur compatibility..."
 
 # Backup original only after proving it is a native binary. This avoids
