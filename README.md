@@ -43,7 +43,7 @@ cd claude-bigsur-compat
 ./build.sh
 ```
 
-`build.sh` compiles the ICU shim library and copies a suitable `libc++.1.dylib` into `~/.claude/compat/`. You only need to run this once.
+`build.sh` compiles the ICU shim library and copies a suitable `libc++.1.dylib` into `~/.claude/compat/`. When the selected libc++ has `@rpath` runtime dependencies (for example Homebrew LLVM's `libc++abi.1.dylib` and `libunwind.1.dylib`), the build script also copies those dependencies into `~/.claude/compat/` and rewrites the dylib references so Claude Code can launch without `DYLD_LIBRARY_PATH`. You only need to run this once.
 
 ## Usage
 
@@ -116,7 +116,7 @@ Big Sur ships ICU 66; the binary expects ICU 69+ symbols. The most important is 
 
 ### 2. Missing libc++ ABI symbols
 
-Big Sur's system `libc++` is too old and lacks symbols like `basic_stringbuf::str() const` and `basic_stringstream` VTT entries. The build script locates a newer LLVM libc++ (from Anaconda, Homebrew, or conda) that provides these symbols and still runs on macOS 11.
+Big Sur's system `libc++` is too old and lacks symbols like `basic_stringbuf::str() const` and `basic_stringstream` VTT entries. The build script locates a newer LLVM libc++ (from Anaconda, Homebrew, or conda) that provides these symbols and still runs on macOS 11. For Homebrew LLVM, it also vendors the related runtime dylibs that libc++ loads through `@rpath`.
 
 ### 3. Mach-O minimum OS version
 
@@ -163,6 +163,8 @@ Build artifacts are placed in `~/.claude/compat/`:
 ~/.claude/compat/
   libicucore.A.dylib   ICU shim (re-exports system ICU + missing symbols)
   libc++.1.dylib       Compatible LLVM libc++
+  libc++abi.1.dylib    Copied when required by the selected libc++
+  libunwind.1.dylib    Copied when required by the selected libc++
   icu_compat.c         Copy of the source for reference
 ```
 
