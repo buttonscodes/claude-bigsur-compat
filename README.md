@@ -151,6 +151,7 @@ The original binary is backed up to `claude.exe.original`.
 - **`ubrk_clone` is a real shim** and works correctly by delegating to `ubrk_safeClone`. This is the only symbol the binary actually calls during normal operation.
 - **You must re-patch after every update.** `npm install -g @anthropic-ai/claude-code@latest` replaces the binary, so run `./patch-claude.sh` again each time. See [Auto-patch on update](#auto-patch-on-update) for a launchd watcher that does this automatically.
 - **x86_64 only.** Big Sur on Apple Silicon is unlikely in the wild, but this has only been tested on Intel.
+- **Requires a CPU with AVX2.** `claude.exe` is a compiled Bun binary, and Bun's x64 builds use AVX2 instructions. On Big Sur-capable Macs without AVX2 (notably the Mac Pro Late 2013, Ivy Bridge Xeon) the binary crashes at launch with `illegal hardware instruction` (SIGILL) -- nothing this repo patches can fix that. Check with `sysctl machdep.cpu.leaf7_features | grep -i AVX2`; if it prints nothing, your only option is a pre-Bun Claude Code release (~2.1.84 or earlier).
 - **Not officially supported.** This is a community workaround. A future Claude Code update could add new symbol dependencies that break compatibility.
 
 ---
